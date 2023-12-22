@@ -23,20 +23,21 @@ class Translator:
 		return result
 	def declare(self, ptype, dbody):
 		if isinstance(dbody, str):
-			return (ptype, dbody)
+			return (dbody, ptype)
 		if dbody == []:
-			return (ptype, None)
-		ty, name = self.declare(ptype, dbody[1])
+			return (None, ptype)
+		name, ty = self.declare(ptype, dbody[1])
 		match dbody[0]:
 			case "arg":
 				params = self.dparams(dbody[2])
-				return (["arg", ty, params], name)
+				v = ["arg", ty, params]
 			case "array":
-				return (["array", ty], name)
+				v = ["array", ty]
 			case "ptr":
-				return (["ptr", ty], name)
+				v = ["ptr", ty]
 			case x:
 				raise Exception(x)
+		return (name, v)
 	def cexpr(self, j):
 		if isinstance(j, str):
 			return j
@@ -47,7 +48,7 @@ class Translator:
 				# primitive type like int will be (int, [])
 				assert len(j[2]) == 3
 				assert j[2][0] == "type"
-				ty, name = self.declare(j[2][1], j[2][2])
+				name, ty = self.declare(j[2][1], j[2][2])
 				assert name == None
 				return ["cast", ty, self.cexpr(j[1])]
 		for jj in j[1:]:
@@ -164,11 +165,11 @@ class Translator:
 			bodys = block[idx][2]
 			for body in bodys:
 				if isinstance(body, list):
-					ty, name = self.declare(ty, body[1])
+					name, ty = self.declare(ty, body[1])
 					pending.append([name, body[2]])
 				else:
-					ty, name = self.declare(ty, body)
-				decls.append([ty, name])
+					name, ty = self.declare(ty, body)
+				decls.append([name, ty])
 			idx += 1
 		block = block[idx:]
 		result = ["let", decls, []]
@@ -195,15 +196,15 @@ class Translator:
 		match block[0]:
 			case "static" | "defun":
 				assert block[1] == "declare"
-				ty, name = self.declare(block[2], block[3])
+				name, ty = self.declare(block[2], block[3])
 				assert ty[0] == "arg"
 				body = self.procedure(block[4])
 				if self.exitlabel:
 					body = procedure_push(
 						body, ["label", "LEXIT"])
-				return ["fn", ty[1], name, ty[2], body]
-			case "typedef":
-				ty, name = self.declare(block[1], block[2])
-				return ["typedef", ty, name]
+				return ["fn", name, ty[2], ty[1], body]
+			# case "typedef":
+			# 	name, ty = self.declare(block[1], block[2])
+			# 	return ["typedef", name, ty]
 			case x:
 				raise Exception(x)
