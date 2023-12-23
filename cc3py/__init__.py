@@ -203,6 +203,11 @@ class Translator:
 					body = procedure_push(
 						body, ["label", "LEXIT"])
 				return ["fn", name, ty[2], ty[1], body]
+			case "decfun":
+				assert block[1] == "declare"
+				name, ty = self.declare(block[2], block[3])
+				assert ty[0] == "arg"
+				return ["fn", name, ty[2], ty[1], []]
 			# case "typedef":
 			# 	name, ty = self.declare(block[1], block[2])
 			# 	return ["typedef", name, ty]
