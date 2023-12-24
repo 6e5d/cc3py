@@ -3,6 +3,7 @@ importer("../../pyltr/pyltr", __file__)
 importer("../../pycdb/pycdb", __file__)
 
 from pycdb import test_identifier
+from pycdb.precedence import opprec
 
 def ppush(j, s):
 	if j[0] == "let":
@@ -16,11 +17,12 @@ def pprep(j, s):
 	return ["let", [], [s, j]]
 
 class Translator:
-	def __init__(self):
+	def __init__(self, ns):
 		self.label = 0
 		# Scope label stack
 		# each member is [begin, after]
 		# true means used
+		self.ns = ns
 		self.sls = []
 		self.exitlabel = False
 	def dparams(self, j):
@@ -30,12 +32,20 @@ class Translator:
 			ty, name = self.declare(ptype, dbody)
 			result.append([ty, name])
 		return result
+	def ptype(self, ptype):
+		if isinstance(ptype, list):
+			assert ptype[0] == "ns_type"
+			ptype = f"{self.ns[1]}{ptype[1]}"
+		return ptype
 	def declare(self, ptype, dbody):
+		ptype = self.ptype(ptype)
+		return self.declare2(ptype, dbody)
+	def declare2(self, ptype, dbody):
 		if isinstance(dbody, str):
 			return (dbody, ptype)
 		if dbody == []:
 			return (None, ptype)
-		name, ty = self.declare(ptype, dbody[1])
+		name, ty = self.declare2(ptype, dbody[1])
 		match dbody[0]:
 			case "arg":
 				params = self.dparams(dbody[2])
@@ -49,15 +59,16 @@ class Translator:
 					v = ["arg", ["ptr", ret], arg]
 				else:
 					v = ["ptr", ty]
+			case "ns_name":
+				return self.declare2(ptype,
+					f"{self.ns[0]}{dbody[1]}")
 			case x:
 				raise Exception(x)
 		return (name, v)
 	def cexpr(self, j):
 		if isinstance(j, str):
 			return j
-		j1 = []
-		j1.append(self.cexpr(j[0]))
-		match j1[0]:
+		match j[0]:
 			case "cast":
 				# primitive type like int will be (int, [])
 				assert len(j[2]) == 3
@@ -65,9 +76,17 @@ class Translator:
 				name, ty = self.declare(j[2][1], j[2][2])
 				assert name == None
 				return ["cast", ty, self.cexpr(j[1])]
-		for jj in j[1:]:
-			j1.append(self.cexpr(jj))
-		return j1
+			case "lit":
+				# lit cannot be ns type, cannot take expr
+				return j
+			case "ns_name":
+				return f"{self.ns[0]}{j[1]}"
+		if j[0] == "apply":
+			return self.apply(j)
+		opprec(j[0]) # must be op
+		for idx, jj in enumerate(j[1:]):
+			j[idx + 1] = self.cexpr(jj)
+		return j
 	def stmtexpr(self, j):
 		assert j[0] == "stmtexpr"
 		if j[1] == []:
@@ -75,13 +94,8 @@ class Translator:
 		j = j[1]
 		if len(j) == 1 and test_identifier(j[0]):
 			return ["nop"]
-		if isinstance(j[0], str) and not test_identifier(j[0]):
-			# op1 op2
-			j2 = [j[0]]
-			for jj in j[1:]:
-				jj = self.cexpr(jj)
-				j2.append(jj)
-			return j2
+		return self.cexpr(j)
+	def apply(self, j):
 		assert j[0] == "apply"
 		assert len(j) == 3
 		assert isinstance(j[2], list)
@@ -272,6 +286,6 @@ class Translator:
 					assert lit == "declare"
 					name, ty = self.declare(ptype, name)
 					decls.append([name, ty])
-				return [block[1], block[3], decls]
+				return [block[1], self.ptype(block[3]), decls]
 			case x:
 				raise Exception(x)
