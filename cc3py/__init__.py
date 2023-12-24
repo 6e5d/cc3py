@@ -4,15 +4,24 @@ importer("../../pycdb/pycdb", __file__)
 
 from pycdb import test_identifier
 
-def procedure_push(j, s):
+def ppush(j, s):
 	if j[0] == "let":
 		j[2].append(s)
 		return j
 	return ["let", [], [j, s]]
+def pprep(j, s):
+	if j[0] == "let":
+		j[2] = [s] + j[2]
+		return j
+	return ["let", [], [s, j]]
 
 class Translator:
 	def __init__(self):
 		self.label = 0
+		# Scope label stack
+		# each member is [begin, after]
+		# true means used
+		self.sls = []
 		self.exitlabel = False
 	def dparams(self, j):
 		result = []
@@ -32,9 +41,14 @@ class Translator:
 				params = self.dparams(dbody[2])
 				v = ["arg", ty, params]
 			case "array":
-				v = ["array", ty]
+				v = ["array", ty, dbody[2]]
 			case "ptr":
-				v = ["ptr", ty]
+				# TODO: properly tests compound types
+				if isinstance(ty, list) and ty[0] == "arg":
+					_, ret, arg = ty
+					v = ["arg", ["ptr", ret], arg]
+				else:
+					v = ["ptr", ty]
 			case x:
 				raise Exception(x)
 		return (name, v)
@@ -54,22 +68,55 @@ class Translator:
 		for jj in j[1:]:
 			j1.append(self.cexpr(jj))
 		return j1
+	def stmtexpr(self, j):
+		assert j[0] == "stmtexpr"
+		if j[1] == []:
+			return ["nop"]
+		j = j[1]
+		if len(j) == 1 and test_identifier(j[0]):
+			return ["nop"]
+		if isinstance(j[0], str) and not test_identifier(j[0]):
+			# op1 op2
+			j2 = [j[0]]
+			for jj in j[1:]:
+				jj = self.cexpr(jj)
+				j2.append(jj)
+			return j2
+		assert j[0] == "apply"
+		assert len(j) == 3
+		assert isinstance(j[2], list)
+		func = self.cexpr(j[1])
+		args = [self.cexpr(jj) for jj in j[2]]
+		return ["apply", func, args]
 	def control_for(self, j):
-		result = ["begin"]
+		assert len(j) == 3
 		assert len(j[1]) == 3
-		if len(j[1][0]) > 0:
-			result.append(self.statement([j[1][0]])[0])
-		while_body = procedure(j[2])
-		if len(j[1][2]) > 0:
-			procedure_push(while_body, j[1][1])
-		if len(j[1][1]) > 0:
-			result.append(["while", j[1][1], while_body])
+		self.sls.append([None, None])
+		proc = []
+		decls = []
+		init = j[1][0]
+		if init[0] == "stmtexpr":
+			proc.append(self.stmtexpr(init))
 		else:
-			result.append(["while", "1", while_body])
-		return result
-	def lbl(self):
+			assert init[0] == "stmtdec"
+			self.stmtdec(init, decls, proc)
+		body = self.procedure(j[2])
+		if self.sls[-1][0] != None:
+			l = ["label", self.sls[-1][0]]
+			body = ppush(body, l)
+		body = ppush(body, self.stmtexpr(j[1][2]))
+		condition = self.stmtexpr(j[1][1])
+		if condition == ["nop"]:
+			condition = ["lit", "int", "1"]
+		whl = ["while", condition, body]
+		proc.append(whl)
+		if self.sls[-1][1] != None:
+			l = ["label", self.sls[-1][1]]
+			proc.append(l)
+		return ["let", decls, proc]
+	def lbl(self, name):
 		self.label += 1
-		return f"L{self.label - 1}"
+		return f"{name}{self.label - 1}"
 	def control_ifcont(self, j, lbl):
 		if j[0] == "else":
 			return [self.procedure(j[1])]
@@ -78,7 +125,7 @@ class Translator:
 		s = ["if", self.cexpr(j[1]), self.procedure(j[2])]
 		if len(j[3]) == 0:
 			return [s]
-		s[2] = procedure_push(s[2], ["goto", lbl])
+		s[2] = ppush(s[2], ["goto", lbl])
 		result = [s]
 		result += self.control_ifcont(j[3], lbl)
 		return result
@@ -87,13 +134,22 @@ class Translator:
 		s = ["if", self.cexpr(j[1]), self.procedure(j[2])]
 		if len(j[3]) == 0:
 			return [s]
-
-		lbl = self.lbl()
-		s[2] = procedure_push(s[2], ["goto", lbl])
+		lbl = self.lbl("ENDIF")
+		s[2] = ppush(s[2], ["goto", lbl])
 		result = [s]
 		result += self.control_ifcont(j[3], lbl)
 		result.append(["label", lbl])
 		return result
+	def control_while(self, j):
+		assert len(j) == 3
+		self.sls.append([None, None])
+		x = ["while", self.cexpr(j[1]), self.procedure(j[2])]
+		if self.sls[-1][0] != None:
+			x[2] = pprep(x[2], ["label", self.sls[-1][0]])
+		if self.sls[-1][1] != None:
+			x = ppush(x, ["label", self.sls[-1][1]])
+		self.sls.pop()
+		return x
 	def control_return(self, j):
 		if len(j) == 1:
 			self.exitlabel = True
@@ -116,30 +172,27 @@ class Translator:
 				return ["let", [], s]
 			return s
 		elif j[0] == "while":
-			raise Exception("unimpl")
-			# return control_while(j)
+			return self.control_while(j)
 		elif j[0] == "return":
 			return self.control_return(j)
 		elif j[0] in ["continue", "break"]:
-			return j
+			assert len(self.sls) > 0
+			if j[0] == "continue":
+				if self.sls[-1][0] == None:
+					self.sls[-1][0] = self.lbl("CONT")
+				lbl = self.sls[-1][0]
+			else:
+				if self.sls[-1][1] == None:
+					self.sls[-1][1] = self.lbl("BREAK")
+				lbl = self.sls[-1][1]
+			return ["goto", lbl]
+			raise Exception(j)
 		elif j[0] == "begin":
 			return self.procedure(j)
-		elif isinstance(j[0], str) and not test_identifier(j[0]):
-			# op1 op2
-			j2 = [j[0]]
-			for jj in j[1:]:
-				jj = self.cexpr(jj)
-				j2.append(jj)
-			return j2
-		assert j[0] == "apply"
-		assert len(j) == 3
-		assert isinstance(j[2], list)
-		func = self.cexpr(j[1])
-		args = [self.cexpr(jj) for jj in j[2]]
-		return ["apply", func, args]
+		return self.stmtexpr(j)
 	def statement(self, j):
 		assert isinstance(j, list)
-		if j[0][0] == "declare":
+		if j[0][0] == "stmtdec":
 			return (None, j)
 		s = self.statement2(j[0])
 		return (s, j[1:])
@@ -150,47 +203,52 @@ class Translator:
 			# array
 		assert len(term) == 2
 		return ["=", [".", name, term[0]], s]
+	# decls: int x; pending x=1, modify those arrays
+	def stmtdec(self, j, decls, pending):
+		assert j[0] == "stmtdec"
+		ty = j[1]
+		bodys = j[2]
+		for body in bodys:
+			if isinstance(body, list):
+				name, ty = self.declare(ty, body[1])
+				val = body[2]
+				if val[0] == "braceinit":
+					for idx, term in enumerate(val[1]):
+						s = self.sinit(name, term, idx)
+						pending.append(s)
+				else:
+					pending.append(
+						["=", name, self.cexpr(val)])
+			else:
+				name, ty = self.declare(ty, body)
+			decls.append([name, ty])
 	def procedure(self, block):
 		if block[0] != "begin":
 			return self.statement([block])[0]
-		result = ["let"]
 		decls = []
 		idx = 1
 		# translate header
 		pending = []
 		while idx < len(block):
-			if block[idx][0] != "declare":
+			if block[idx][0] != "stmtdec":
 				break
-			ty = block[idx][1]
-			bodys = block[idx][2]
-			for body in bodys:
-				if isinstance(body, list):
-					name, ty = self.declare(ty, body[1])
-					pending.append([name, body[2]])
-				else:
-					name, ty = self.declare(ty, body)
-				decls.append([name, ty])
+			self.stmtdec(block[idx], decls, pending)
 			idx += 1
 		block = block[idx:]
-		result = ["let", decls, []]
-		for [name, val] in pending:
-			if val[0] == "initval":
-				for idx, term in enumerate(val[1]):
-					s = self.sinit(name, term, idx)
-					result[2].append(s)
-			else:
-				result[2].append(["=", name, self.cexpr(val)])
-		t = result
+		result = ["let", decls, pending]
 		# translate body
 		if len(block) == 0:
 			return result
 		while block:
 			j, block = self.statement(block)
-			if j == None:
+			if j == None: # meet next stmtdec
 				result[2].append(
 					self.procedure(["begin"] + block))
 				break
-			result[2].append(j)
+			if j[0] == "let" and j[1] == []:
+				result[2] += j[2]
+			else:
+				result[2].append(j)
 		return result
 	def ast2c3(self, block):
 		match block[0]:
@@ -200,16 +258,20 @@ class Translator:
 				assert ty[0] == "arg"
 				body = self.procedure(block[4])
 				if self.exitlabel:
-					body = procedure_push(
-						body, ["label", "LEXIT"])
+					body = ppush(body, ["label", "LEXIT"])
 				return ["fn", name, ty[2], ty[1], body]
 			case "decfun":
 				assert block[1] == "declare"
 				name, ty = self.declare(block[2], block[3])
 				assert ty[0] == "arg"
-				return ["fn", name, ty[2], ty[1], []]
-			# case "typedef":
-			# 	name, ty = self.declare(block[1], block[2])
-			# 	return ["typedef", name, ty]
+				return ["fn", name, ty[2], ty[1],
+					["let", [], []]]
+			case "typedef_su":
+				decls = []
+				for lit, ptype, name in block[2]:
+					assert lit == "declare"
+					name, ty = self.declare(ptype, name)
+					decls.append([name, ty])
+				return [block[1], block[3], decls]
 			case x:
 				raise Exception(x)
