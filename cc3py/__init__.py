@@ -79,6 +79,10 @@ class Translator:
 			case "lit":
 				# lit cannot be ns type, cannot take expr
 				return j
+			case "type":
+				name, ty = self.declare(j[1], j[2])
+				assert name == None
+				return ty
 			case "ns_name":
 				return f"{self.ns[0]}{j[1]}"
 		if j[0] == "apply":
