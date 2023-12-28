@@ -2,8 +2,7 @@ from importer import importer
 importer("../../pyltr/pyltr", __file__)
 importer("../../pycdb/pycdb", __file__)
 
-from pycdb import test_identifier
-from pycdb.precedence import opprec
+from pycdb import test_identifier, opprec
 
 def dparams(j):
 	result = []
@@ -121,8 +120,7 @@ def for23stmt(j):
 	j = j[0]
 	if j == []:
 		return ["nop"]
-	assert j[0] == "expr"
-	return j[1]
+	return j
 def statement2(j):
 	# control, call, expr
 	if isinstance(j, str):
@@ -146,7 +144,7 @@ def statement2(j):
 	elif j[0] == "begin":
 		return procedure(j)
 	elif j[0] == "expr":
-		return ["expr", cexpr(j[1])]
+		return cexpr(j[1])
 	else:
 		raise Exception(j)
 def sinit(name, term, idx):
