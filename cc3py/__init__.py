@@ -12,26 +12,24 @@ def dparams(j):
 		result.append([ty, name])
 	return result
 def declare(ptype, dbody):
-	return declare2(ptype, dbody)
-def declare2(ptype, dbody):
 	if isinstance(dbody, str):
 		return (dbody, ptype)
 	if dbody == []:
 		return (None, ptype)
-	name, ty = declare2(ptype, dbody[1])
+	name, ty = declare(ptype, dbody[1])
 	match dbody[0]:
-		case "arg":
+		case "Arg":
 			params = dparams(dbody[2])
-			v = ["arg", ty, params]
-		case "array":
-			v = ["array", ty, dbody[2]]
-		case "ptr":
+			v = ["Arg", ty, params]
+		case "Array":
+			v = ["Array", ty, dbody[2]]
+		case "Ptr":
 			# TODO: properly tests compound types
-			if isinstance(ty, list) and ty[0] == "arg":
+			if isinstance(ty, list) and ty[0] == "Arg":
 				_, ret, arg = ty
-				v = ["arg", ["ptr", ret], arg]
+				v = ["Arg", ["Ptr", ret], arg]
 			else:
-				v = ["ptr", ty]
+				v = ["Ptr", ty]
 		case x:
 			raise Exception(x)
 	return (name, v)
@@ -79,9 +77,9 @@ def control_ifcont(j):
 		return [control_branch("true", j[1])]
 	assert j[0] == "elif"
 	j = j[1]
-	branch = [control_branch(j[1], procedure(j[2]))]
+	branch = [control_branch(j[1], j[2])]
 	if len(j[3]) == 0:
-		return [branch]
+		return branch
 	branch += control_ifcont(j[3])
 	return branch
 def control_branch(cond, body):
@@ -105,6 +103,8 @@ def control_return(j):
 	result.append(cexpr(j[1]))
 	return result
 def statement(j):
+	if isinstance(j, list) and len(j) == 0:
+		return [["nop"]]
 	if isinstance(j, list) and j[0] == "stmtdec":
 		return stmtdec(j)
 	else:
@@ -186,13 +186,13 @@ def ast2c3(block):
 		case "static" | "defun":
 			assert block[1] == "declare"
 			name, ty = declare(block[2], block[3])
-			assert ty[0] == "arg"
+			assert ty[0] == "Arg"
 			body = procedure(block[4])
 			return ["fn", name, ty[2], ty[1], body]
 		case "decfun":
 			assert block[1] == "declare"
 			name, ty = declare(block[2], block[3])
-			assert ty[0] == "arg"
+			assert ty[0] == "Arg"
 			return ["fn", name, ty[2], ty[1],
 				["let", [], []]]
 		case "typedef_su":
