@@ -12,33 +12,51 @@ def dparams(j):
 		result.append([ty, name])
 	return result
 def declare(ptype, dbody):
+	l = []
+	while isinstance(dbody, list):
+		if dbody == []:
+			break
+		l.append(dbody)
+		dbody = dbody[1]
 	if isinstance(dbody, str):
-		return (dbody, ptype)
-	if dbody == []:
-		return (None, ptype)
-	name, ty = declare(ptype, dbody[1])
-	match dbody[0]:
-		case "Arg":
-			params = dparams(dbody[2])
-			v = ["Arg", ty, params]
-		case "Array":
-			v = ["Array", ty, dbody[2]]
-		case "Ptr":
-			# TODO: properly tests compound types
-			if isinstance(ty, list) and ty[0] == "Arg":
-				_, ret, arg = ty
-				v = ["Arg", ["Ptr", ret], arg]
-			else:
-				v = ["Ptr", ty]
-		case x:
-			raise Exception(x)
+		name = dbody
+	else:
+		assert dbody == []
+		name = None
+	v = ptype
+	for ll in l:
+		match ll[0]:
+			case "Arg":
+				params = dparams(ll[2])
+				v = ["Arg", v, params]
+			case "Array":
+				v = ["Array", v, ll[2]]
+			case "Ptr":
+				v = ["Ptr", v]
+			case x:
+				raise Exception(x)
 	return (name, v)
+def initval(j):
+	if isinstance(j, list):
+		if j[0] == "sval":
+			return sval(j)
+		elif j[0] == "aval":
+			return aval(j)
+	return cexpr(j)
 def sval(j):
-	result = []
-	for jj in j:
-		jj[-1] = cexpr(jj[-1])
-		result.append(jj)
-	return result
+	for idx, jj in enumerate(j):
+		if idx == 0:
+			assert jj == "sval"
+			continue
+		j[idx][1] = initval(jj[1])
+	return j
+def aval(j):
+	for idx, jj in enumerate(j):
+		if idx == 0:
+			assert jj == "aval"
+			continue
+		j[idx] = initval(jj)
+	return j
 def cexpr(j):
 	if isinstance(j, str):
 		return j
@@ -48,10 +66,7 @@ def cexpr(j):
 			assert j[1][0] == "type"
 			name, ty = declare(j[1][1], j[1][2])
 			assert name == None
-			if j[0] == "cast":
-				return ["cast", ty, cexpr(j[2])]
-			else:
-				return ["casts", ty, sval(j[2])]
+			return ["cast", ty, initval(j[2])]
 		case "lit":
 			# lit cannot be ns type, cannot take expr
 			return j
@@ -61,7 +76,7 @@ def cexpr(j):
 			return ty
 	if j[0] == "apply":
 		return apply(j)
-	opprec(j[0]) # this is assert
+	assert(isinstance(opprec(j[0]), int))
 	for idx, jj in enumerate(j[1:]):
 		j[idx + 1] = cexpr(jj)
 	return j
@@ -84,6 +99,12 @@ def control_ifcont(j):
 	return branch
 def control_branch(cond, body):
 	return [cexpr(cond), procedure(body)]
+def control_case(j):
+	raise Exception("switch is unsupported")
+	result = ["case", cexpr(j[1])]
+	for jj in j[2:]:
+		result += [control_branch(*jj)]
+	return result
 def control_if(j):
 	assert len(j) == 4
 	branches = [control_branch(j[1], j[2])]
@@ -132,12 +153,16 @@ def statement2(j):
 		c2 = for23stmt(j[1][1])
 		c3 = for23stmt(j[1][2])
 		return ["for", c1, c2, c3, procedure(j[2])]
+	elif j[0] == "case":
+		return control_case(j)
 	elif j[0] == "if":
 		return control_if(j)
 	elif j[0] == "while":
 		return control_while(j)
 	elif j[0] == "return":
 		return control_return(j)
+	elif j[0] == "returnvoid":
+		return ["returnvoid"]
 	elif j[0] in ["continue", "break"]:
 		assert len(j) == 1
 		return j
@@ -157,12 +182,9 @@ def sinit(name, term, idx):
 def stmtdec_body(j, ty, body):
 	name, ty = declare(ty, body[1])
 	match body[0]:
-		case "set":
-			val = cexpr(body[2])
+		case "set" | "sets":
+			val = initval(body[2])
 			return ["set", name, ty, val]
-		case "sets":
-			val = sval(body[2])
-			return ["sets", name, ty, val]
 		case "var":
 			return ["var", name, ty]
 		case x:
