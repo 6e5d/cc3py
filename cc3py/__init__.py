@@ -3,6 +3,7 @@ importer("../../pyltr/pyltr", __file__)
 importer("../../pycdb/pycdb", __file__)
 
 from pycdb import test_identifier, opprec
+from pyltr import S
 
 def dparams(j):
 	result = []
@@ -81,8 +82,13 @@ def cexpr(j):
 			assert name == None
 			return ["sizeof", ty]
 		case "lit":
-			# lit cannot be ns type, cannot take expr
-			return j
+			match j[1]:
+				case "str":
+					return S('"' + j[2] + '"')
+				case "char":
+					return S("'" + j[2] + "'")
+				case x:
+					return S(j[2])
 		case "type":
 			name, ty = declare(j[1], j[2])
 			assert name == None
@@ -224,12 +230,13 @@ def ast2c3(block):
 			assert ty[0] == "Arg"
 			body = procedure(block[4])
 			return ["fn", name, ty[2:], ty[1], body]
+		case "const":
+			return ["const", block[2], block[1], cexpr(block[3])]
 		case "decfun":
 			assert block[1] == "declare"
 			name, ty = declare(block[2], block[3])
 			assert ty[0] == "Arg"
-			return ["fn", name, ty[2:], ty[1],
-				["let", [], []]]
+			return ["decfun", name, ty[2:], ty[1], []]
 		case "typedef_su":
 			decls = []
 			for lit, ptype, name in block[2]:
