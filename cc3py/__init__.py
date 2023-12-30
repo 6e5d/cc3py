@@ -38,7 +38,7 @@ def declare(ptype, dbody):
 					params = []
 				v = ["Arg", v] + params
 			case "Array":
-				v = ["Array", v, ll[2]]
+				v = ["Array", v, cexpr(ll[2])]
 			case "Ptr":
 				v = ["Ptr", v]
 			case x:
