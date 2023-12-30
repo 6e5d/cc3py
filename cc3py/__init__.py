@@ -8,8 +8,13 @@ def dparams(j):
 	result = []
 	for [x, ptype, dbody] in j:
 		assert x == "declare"
-		ty, name = declare(ptype, dbody)
-		result.append([ty, name])
+		name, ty = declare(ptype, dbody)
+		if name == None:
+			result.append(ty)
+		else:
+			result.append([name, ty])
+	if result == [["void"]]:
+		return []
 	return result
 def declare(ptype, dbody):
 	l = []
@@ -28,7 +33,9 @@ def declare(ptype, dbody):
 		match ll[0]:
 			case "Arg":
 				params = dparams(ll[2])
-				v = ["Arg", v, params]
+				if params == ["void"]:
+					params = []
+				v = ["Arg", v] + params
 			case "Array":
 				v = ["Array", v, ll[2]]
 			case "Ptr":
@@ -63,10 +70,16 @@ def cexpr(j):
 	match j[0]:
 		case "cast" | "casts":
 			assert len(j[1]) == 3
-			assert j[1][0] == "type"
+			assert j[1][0] == "declare"
 			name, ty = declare(j[1][1], j[1][2])
 			assert name == None
 			return ["cast", ty, initval(j[2])]
+		case "sizeof":
+			assert len(j[1]) == 3
+			assert j[1][0] == "declare"
+			name, ty = declare(j[1][1], j[1][2])
+			assert name == None
+			return ["sizeof", ty]
 		case "lit":
 			# lit cannot be ns type, cannot take expr
 			return j
@@ -210,12 +223,12 @@ def ast2c3(block):
 			name, ty = declare(block[2], block[3])
 			assert ty[0] == "Arg"
 			body = procedure(block[4])
-			return ["fn", name, ty[2], ty[1], body]
+			return ["fn", name, ty[2:], ty[1], body]
 		case "decfun":
 			assert block[1] == "declare"
 			name, ty = declare(block[2], block[3])
 			assert ty[0] == "Arg"
-			return ["fn", name, ty[2], ty[1],
+			return ["fn", name, ty[2:], ty[1],
 				["let", [], []]]
 		case "typedef_su":
 			decls = []
